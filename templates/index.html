@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sx Photo Album</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Sx Photo Album</h1>
+        <div class="stats">
+            <span>Total Images: {{ total_images }}</span>
+            {% if last_updated %}
+            <span>Last Updated: {{ last_updated[:19].replace('T', ' ') }}</span>
+            {% endif %}
+        </div>
+    </header>
+
+    <div class="controls">
+        <form action="" method="get" class="search-form">
+            <input type="hidden" name="album" value="{{ current_album }}">
+            <input type="search" name="q" placeholder="Search for images..." value="{{ search_query or '' }}">
+            <button type="submit">Search</button>
+            {% if search_query %}
+            <a href="?album={{ current_album }}" class="clear-search">Clear</a>
+            {% endif %}
+        </form>
+
+        <form action="" method="get" class="album-form">
+            <input type="hidden" name="q" value="{{ search_query or '' }}">
+            <label for="album">Select Album:</label>
+            <select id="album" name="album" onchange="this.form.submit()">
+                {% for album in albums %}
+                    <option value="{{ album }}" {% if album == current_album %}selected{% endif %}>
+                        {{ album }}
+                    </option>
+                {% endfor %}
+            </select>
+        </form>
+
+        <button onclick="rebuildIndex()" class="rebuild-btn" id="rebuildBtn">
+            Rebuild Index
+        </button>
+    </div>
+
+    {% if current_album %}
+    <div class="album-info">
+        <h2>{{ current_album }}</h2>
+        <p>{{ images|length }} images{% if search_query %} (filtered){% endif %}</p>
+    </div>
+    {% endif %}
+
+    <div class="image-grid">
+        {% for image in images %}
+            <div class="image-item">
+                <img src="{{ url_for('get_image', image_hash=image.hash) }}" 
+                     alt="{{ image.name }}" 
+                     title="{{ image.name }} ({{ (image.size / 1024 / 1024) | round(2) }} MB)"
+                     onclick="openModal(this.src, '{{ image.name }}')">
+                <div class="image-info">
+                    <span class="image-name">{{ image.name }}</span>
+                    <span class="image-size">{{ (image.size / 1024 / 1024) | round(2) }} MB</span>
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+
+    {% if not images and current_album %}
+    <div class="no-images">
+        <p>No images found in this album{% if search_query %} matching "{{ search_query }}"{% endif %}.</p>
+        {% if search_query %}
+        <a href="?album={{ current_album }}">Show all images in {{ current_album }}</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Modal Structure -->
+    <div id="myModal" class="modal">
+        <div class="modal-content">
+            <img id="modalImage" src="" alt="Fullscreen Image">
+            <div class="modal-info">
+                <span id="modalImageName"></span>
+            </div>
+            <button class="exit-button" onclick="closeModal()">Exit</button>
+        </div>
+    </div>
+
+    <script>
+        // Enhanced modal functionality with Apple-style animations
+        function openModal(src, name) {
+            const modal = document.getElementById('myModal');
+            const modalImage = document.getElementById('modalImage');
+            const modalImageName = document.getElementById('modalImageName');
+            
+            modalImage.src = src;
+            modalImageName.textContent = name;
+            modal.style.display = 'flex';
+            
+            // Trigger animation
+            setTimeout(() => {
+                modal.classList.add('show');
+            }, 10);
+            
+            // Prevent body scrolling
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('myModal');
+            modal.classList.remove('show');
+            
+            // Restore body scrolling
+            document.body.style.overflow = '';
+            
+            setTimeout(() => {
+                modal.style.display = 'none';
+            }, 300);
+        }
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        // Close the modal if clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('myModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+
+        // Enhanced rebuild index with better UX
+        function rebuildIndex() {
+            const btn = document.getElementById('rebuildBtn');
+            const originalText = btn.textContent;
+            
+            // Add loading state
+            btn.innerHTML = '<span class="loading">●</span> Rebuilding...';
+            btn.disabled = true;
+            btn.style.opacity = '0.7';
+
+            fetch('/rebuild-index')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Success notification
+                        showNotification(`✅ Index rebuilt successfully!\n📸 ${data.total_images.toLocaleString()} images\n📁 ${data.total_albums} albums`, 'success');
+                        
+                        // Smooth reload after delay
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1500);
+                    } else {
+                        showNotification('❌ Error rebuilding index: ' + data.error, 'error');
+                    }
+                })
+                .catch(error => {
+                    showNotification('❌ Error rebuilding index: ' + error, 'error');
+                })
+                .finally(() => {
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.disabled = false;
+                        btn.style.opacity = '1';
+                    }, 1000);
+                });
+        }
+
+        // Apple-style notification system
+        function showNotification(message, type = 'info') {
+            // Remove existing notification
+            const existing = document.querySelector('.notification');
+            if (existing) existing.remove();
+            
+            const notification = document.createElement('div');
+            notification.className = `notification notification-${type}`;
+            notification.innerHTML = `
+                <div class="notification-content">
+                    ${message.split('\n').map(line => `<div>${line}</div>`).join('')}
+                </div>
+            `;
+            
+            // Add styles
+            notification.style.cssText = `
+                position: fixed;
+                top: 100px;
+                left: 50%;
+                transform: translateX(-50%) translateY(-20px);
+                background: rgba(28, 28, 30, 0.95);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                color: white;
+                padding: 16px 24px;
+                border-radius: 12px;
+                border: 1px solid rgba(99, 99, 102, 0.3);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                z-index: 10000;
+                font-size: 15px;
+                font-weight: 500;
+                text-align: center;
+                opacity: 0;
+                transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+                min-width: 300px;
+            `;
+            
+            if (type === 'success') {
+                notification.style.borderColor = 'rgba(48, 209, 88, 0.5)';
+            } else if (type === 'error') {
+                notification.style.borderColor = 'rgba(255, 69, 58, 0.5)';
+            }
+            
+            document.body.appendChild(notification);
+            
+            // Animate in
+            setTimeout(() => {
+                notification.style.opacity = '1';
+                notification.style.transform = 'translateX(-50%) translateY(0)';
+            }, 10);
+            
+            // Auto remove
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                notification.style.transform = 'translateX(-50%) translateY(-20px)';
+                setTimeout(() => notification.remove(), 300);
+            }, 4000);
+        }
+
+        // Smooth form submissions
+        document.addEventListener('DOMContentLoaded', function() {
+            // Auto-submit album form with loading state
+            const albumSelect = document.getElementById('album');
+            if (albumSelect) {
+                albumSelect.addEventListener('change', function() {
+                    this.style.opacity = '0.7';
+                    this.form.submit();
+                });
+            }
+            
+            // Add search input enhancements
+            const searchInput = document.querySelector('input[type="search"]');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    // Could add real-time search here
+                });
+            }
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(event) {
+                // Cmd/Ctrl + K for search focus
+                if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+                    event.preventDefault();
+                    searchInput?.focus();
+                }
+                
+                // Cmd/Ctrl + R for rebuild
+                if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
+                    event.preventDefault();
+                    rebuildIndex();
+                }
+            });
+            
+            // Add loading states to images
+            const images = document.querySelectorAll('.image-item img');
+            images.forEach(img => {
+                img.addEventListener('load', function() {
+                    this.style.opacity = '1';
+                });
+                
+                img.addEventListener('error', function() {
+                    this.style.opacity = '0.5';
+                    this.style.filter = 'grayscale(1)';
+                });
+            });
+        });
+    </script>
+</body>
+</html>
